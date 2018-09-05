@@ -1,6 +1,3 @@
-#Useage: 
-#1: set [address]_transactions.json same directory
-#2: python3 make_money_flow.py [address] [attention_money_value]
 import pydot
 import json
 import sys
@@ -88,7 +85,6 @@ for edge in edges:
 	for input_transaction in transactions[edge[1]]['in']:
 
 		if input_transaction['tx'] == edge[0]:
-			print(input_transaction)
 			money_value += float(input_transaction['value'])/100000000.0
 
 	edge_strings.append("\"" + edge[0] + '" -> "' + edge[1] + '"' + ' [label="' + str(money_value) + '"];\n')
