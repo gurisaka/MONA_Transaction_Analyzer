@@ -58,7 +58,11 @@ class TransactionsAnalyzer:
 
 			for search_target_txid in search_target_txids[:]:
 				search_target_transaction = self.__get_transaction(search_target_txid)
-				spent_txids = TransactionsAnalyzer.__get_spent_txids(search_target_transaction)
+
+				if search_target_transaction != {}:
+					spent_txids = TransactionsAnalyzer.__get_spent_txids(search_target_transaction)
+				else:
+					spent_txids = []
 
 				for spent_txid in spent_txids:
 					search_target_txids.append(spent_txid)
