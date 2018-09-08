@@ -5,121 +5,153 @@ import datetime
 import os
 from pprint import pprint
 
-def get_transactions(txid):
-	try:
-		return transactions[txid]
-	except Exception as e:
-		return {}
 
-def get_spent_ids(transaction):
-	spent_txids = []
+class TransactionsAnalyzer:
+	def __init__(self, transaction_data_json_path):
+		self.__transactions = {}
+		self.__load_transaction_data(transaction_data_json_path)
 
-	if transaction == {}:
+	# Load Data
+	def __load_transaction_data(self, transaction_data_json_path):
+		with open(transaction_data_json_path, 'r') as file:
+			self.__transactions = json.load(file)
+
+	# Get Transaction Information
+	def __get_transaction(self, txid):
+		if txid in self.__transactions.keys():
+			return self.__transactions[txid]
+		else:
+			return {}
+
+	@classmethod
+	def __get_spent_txids(cls, transaction):
+		spent_txids = []
+
+		for output in transaction['out']:
+			if 'spent' in output.keys():
+				spent_txids.append(output['spent'])
+
 		return spent_txids
 
-	for output in transaction['out']:
-		try:
-			spent_txids.append(output['spent'])
-		except:
-			pass
+	@classmethod
+	def __get_terminate_txids(cls, edges):
+		input_txids = [edge[0] for edge in edges]
+		output_txids = [edge[1] for edge in edges]
+		terminate_txids = []
 
-	return spent_txids
+		for output_txid in output_txids:
+			if output_txid in input_txids:
+				continue
+			terminate_txids.append(output_txid)
 
-def recurcive_search(root_txid,recurcive_max_time):
-	target_txids = [root_txid]
+		return terminate_txids
 
-	searched_txids = [root_txid]
+	def __get_transactions_edges(self, root_txid, search_depth):
+		search_target_txids = [root_txid]
+		searched_txids = [root_txid]
 
-	edges = []
+		edges = []
 
-	for n in range(recurcive_max_time):
-		if target_txids == []:
-			break
-		for target_txid in target_txids[:]:
-			target_transaction = get_transactions(target_txid)
-			spent_txids = get_spent_ids(target_transaction)
+		for depth in range(search_depth):
+			if search_target_txids == []:
+				break
 
-			for txid in spent_txids:
-				target_txids.append(txid)
-				edges.append([target_txid,txid])
+			for search_target_txid in search_target_txids[:]:
+				search_target_transaction = self.__get_transaction(search_target_txid)
+				spent_txids = TransactionsAnalyzer.__get_spent_txids(search_target_transaction)
 
-			target_txids = list(set(target_txids))
-			target_txids.remove(target_txid)
-			searched_txids.append(target_txid)
-		print(n)
+				for spent_txid in spent_txids:
+					search_target_txids.append(spent_txid)
+					edges.append([search_target_txid, spent_txid])
 
-	return edges
+				search_target_txids = list(set(search_target_txids))
+				search_target_txids.remove(search_target_txid)
+				searched_txids.append(search_target_txid)
 
-def get_terminate_txids(edges):
-	input_txids = [edge[0] for edge in edges]
-	output_txids = [edge[1] for edge in edges]
-	terminate_txids = []
+		return edges
 
-	for output_txid in output_txids:
-		if output_txid in input_txids:
-			continue
-		terminate_txids.append(output_txid)
+	# Make Output File
+	def __make_dot_file(self, root_txid, edges, terminate_txids, output_path):
+		# Make Edges
+		edge_strings = []
+		for edge in edges:
+			money_value = 0
 
-	return terminate_txids
+			for input_transaction in self.__transactions[edge[1]]['in']:
 
-block_data_json_path = sys.argv[1]
-root_txid = sys.argv[2]
-recurcive_max_time = int(sys.argv[3])
+				if input_transaction['tx'] == edge[0]:
+					money_value += float(input_transaction['value'])/100000000.0
 
-try:
-	need_svg = int(sys.argv[4])
-except:
-	need_svg = 0
+			edge_strings.append("\"" + edge[0] + '" -> "' + edge[1] + '"' + ' [label="' + str(money_value) + '"];\n')
 
-with open(block_data_json_path,'r') as file:
-	transactions = json.load(file)
+		edge_strings = list(set(edge_strings))
 
-edges = recurcive_search(root_txid,recurcive_max_time)
-terminate_txids = get_terminate_txids(edges)
+		# File Header
+		dot_data = "digraph G {randir=TB;layout=dot;\n"
+		dot_data += root_txid + ' [style = "solid,filled",color = red,fontcolor = white];\n'
 
-edge_strings = []
+		# Terminate Transactions
+		terminate_txids = list(set(terminate_txids))
+		for terminate_txid in terminate_txids:
+			dot_data += terminate_txid + ' [style = "solid,filled",color = black,fontcolor = white];\n'
 
-for edge in edges:
-	money_value = 0
+		# Edges
+		for edge_string in edge_strings:
+			dot_data += edge_string
 
-	for input_transaction in transactions[edge[1]]['in']:
+		# File Tail
+		dot_data += '}'
 
-		if input_transaction['tx'] == edge[0]:
-			money_value += float(input_transaction['value'])/100000000.0
+		with open(output_path, 'w') as file:
+			file.write(dot_data)
 
-	edge_strings.append("\"" + edge[0] + '" -> "' + edge[1] + '"' + ' [label="' + str(money_value) + '"];\n')
+	@classmethod
+	def __make_terminate_transactions_list_file(cls, terminate_txids, output_path):
+		with open(output_path, 'w') as file:
+			for terminate_txid in terminate_txids:
+				file.write(terminate_txid + '\n')
 
-edge_strings = list(set(edge_strings))
+	@classmethod
+	def __make_svg_file(self, dot_file_path, output_path):
+		(graph,) = pydot.graph_from_dot_file(dot_file_path)
+		graph.write_svg(output_path)
 
-#Make Graph
-#Header
-dot_data = "digraph G {randir=TB;layout=dot;\n"
+	def run_analyzer(self, root_txid, search_depth, dot_file_path, terminate_transactions_list_path, svg_file_path):
+		edges = self.__get_transactions_edges(root_txid, search_depth)
+		terminate_txids = self.__get_terminate_txids(edges)
+		self.__make_dot_file(root_txid, edges, terminate_txids, dot_file_path)
+		TransactionsAnalyzer.__make_terminate_transactions_list_file(terminate_txids,terminate_transactions_list_path)
 
-#Nodes
-dot_data += root_txid + ' [style = "solid,filled",color = red,fontcolor = white];\n'
+		if svg_file_path != '':
+			TransactionsAnalyzer.__make_svg_file(dot_file_path, svg_file_path)
 
-terminate_txids = list(set(terminate_txids))
-for terminate_txid in terminate_txids:
-	dot_data += terminate_txid + ' [style = "solid,filled",color = black,fontcolor = white];\n'
 
-#Edges
-for edge_string in edge_strings:
-	#dot_data += "\"" + edge[0] + '" -> "' + edge[1] + '"' + ';\n'
-	dot_data += edge_string
-dot_data += '}'
+if __name__ == '__main__':
+	transactions_data_json_path = sys.argv[1]
+	root_txid = sys.argv[2]
 
-#Make Files
-now = datetime.datetime.now()
-output_dir = './AnalyzeResults/' + root_txid + '_{0:%Y%m%d_%H_%M_%S}'.format(now) + '/'
-os.mkdir(output_dir)
+	if '-r'in sys.argv:
+		recurcive_max_time = int(sys.argv[sys.argv.index('-r') + 1])
+	else:
+		recurcive_max_time = 100
 
-with open(output_dir + 'money_flow.dot','w') as file:
-	file.write(dot_data)
+	if '-s' in sys.argv:
+		svg_output_flag = True
+	else:
+		svg_output_flag = False
 
-with open(output_dir + 'terminate_transaction_list','w') as file:
-	for terminate_txid in terminate_txids:
-		file.write(terminate_txid + '\n')
+	#Make File Paths
+	now = datetime.datetime.now()
+	output_dir = './AnalyzeResults/' + root_txid + '_{0:%Y%m%d_%H_%M_%S}'.format(now) + '/'
+	os.mkdir(output_dir)
 
-if need_svg == 1:
-	(graph,) = pydot.graph_from_dot_file(output_dir + 'money_flow.dot')
-	graph.write_svg(output_dir + 'money_flow.svg')
+	dot_file_path = output_dir + 'money_flow.dot'
+	terminate_transactions_list_path = output_dir + 'terminate_transaction_list.txt'
+	
+	if svg_output_flag == True:
+		svg_file_path = output_dir + 'money_flow.svg'
+	else:
+		svg_file_path = ''
+
+	transaction_analyzer = TransactionsAnalyzer(transactions_data_json_path)
+	transaction_analyzer.run_analyzer(root_txid, recurcive_max_time, dot_file_path, terminate_transactions_list_path, svg_file_path)
